@@ -1,0 +1,70 @@
+from websocket_manager import WebSocketClient
+import asyncio
+import yaml
+import threading
+import queue
+import time
+from parsers import create_table, insert_query, setup_table
+import sqlite3
+
+
+def db_worker(data_queue, log_file='db_store_log.txt'):
+    conn = sqlite3.connect("dat.db")
+    cursor = conn.cursor()
+
+    with open(log_file, 'a', encoding='utf-8') as log:
+        while True:
+            try:
+                table, schema, parsed = data_queue.get()
+                create_sql = create_table(table, schema)
+                setup_table(conn, create_sql)
+
+                if isinstance(parsed, list):
+                    for row in parsed:
+                        insert_sql, values = insert_query(table, row)
+                        cursor.execute(insert_sql, values)
+                        log.write(f"[{table}] Inserted row: {values}\n")
+                else:
+                    insert_sql, values = insert_query(table, parsed)
+                    cursor.execute(insert_sql, values)
+                    log.write(f"[{table}] Inserted row: {parsed}\n")
+
+                conn.commit()
+
+            except Exception as e:
+                error_msg = f"❌ DB Worker Error: {e}\n"
+                print(error_msg)
+                log.write(error_msg)
+
+
+
+
+
+if __name__ == "__main__":
+
+
+
+    with open('C:/Users/Stef/websocket_streams/config.yaml', 'r') as file:
+        config = yaml.safe_load(file)
+        symbol = 'btcusdt'
+        
+        url2 = f"wss://stream.binance.com:9443/stream?streams={symbol}@depth@100ms/{symbol}@trade/{symbol}@aggTrade/{symbol}@bookTicker"
+        url = f"wss://fstream.binance.com/stream?streams={symbol}@depth@100ms/{symbol}@aggTrade/{symbol}@markPrice@1s/{symbol}@bookTicker/{symbol}@forceOrder"
+
+        
+        data_queue = queue.Queue()
+        threading.Thread(target=db_worker, args=(data_queue,), daemon=True).start()
+
+        client = WebSocketClient(url, data_queue=data_queue)
+        client2 = WebSocketClient(url2, data_queue=data_queue)
+
+
+
+        async def main():
+            await asyncio.gather(
+                client.connect(),  # First WebSocket connection
+                client2.connect()   # Second WebSocket connection
+            )
+
+        # Run the async event loop
+        asyncio.run(main())
